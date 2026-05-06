@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>進階波段策略追蹤面板</title>
+    <title>波段與動能雙重策略面板</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -70,7 +70,7 @@
               <div className="max-w-7xl mx-auto">
                 <header className="mb-6 border-b border-slate-700 pb-4">
                   <h1 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-3">
-                    <span className="text-purple-500">⚡</span> 月週雙重波段策略面板
+                    <span className="text-yellow-400">🐻</span> Papa Bear 動能 + KD 波段策略面板
                   </h1>
                 </header>
 
@@ -81,7 +81,7 @@
                       onClick={handleExecute}
                       disabled={isLoading}
                       className={`w-full md:w-auto px-6 py-3 rounded-lg font-bold transition-all ${
-                        isLoading ? "bg-slate-600 text-slate-400" : "bg-purple-600 hover:bg-purple-500 text-white"
+                        isLoading ? "bg-slate-600 text-slate-400" : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg hover:shadow-blue-500/30"
                       }`}
                     >
                       {isLoading ? "雲端運算中..." : "開始執行策略分析"}
@@ -93,7 +93,7 @@
                       <input key={idx} type="text" value={val}
                         onChange={(e) => handleInputChange(idx, e.target.value)}
                         placeholder={`${idx + 1}. 代碼`}
-                        className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-sm text-white focus:outline-none focus:border-purple-500 uppercase"
+                        className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-sm text-white focus:outline-none focus:border-blue-500 uppercase"
                       />
                     ))}
                   </div>
@@ -102,7 +102,7 @@
                 {results.length > 0 && (
                   <section className="bg-slate-800 rounded-xl p-4 shadow-xl border border-slate-700 overflow-hidden">
                     <div className="flex justify-between items-center mb-4">
-                      <h2 className="text-lg font-semibold text-blue-300">策略分析結果</h2>
+                      <h2 className="text-lg font-semibold text-blue-300">策略分析結果 (依動能排序)</h2>
                       <span className="text-xs text-slate-400">更新: {lastUpdateTime}</span>
                     </div>
                     
@@ -111,46 +111,70 @@
                         <thead>
                           <tr className="bg-slate-900/80 border-y border-slate-600">
                             <th className="p-3 font-semibold text-slate-200 sticky left-0 bg-slate-900 z-10">標的代碼</th>
+                            <th className="p-3 font-semibold text-yellow-300 text-sm whitespace-nowrap">動能排名</th>
+                            <th className="p-3 font-semibold text-slate-300 text-sm whitespace-nowrap">動能均值(3/6/12)</th>
                             <th className="p-3 font-semibold text-slate-200">買進訊號</th>
                             <th className="p-3 font-semibold text-slate-200">賣出訊號</th>
                             <th className="p-3 font-semibold text-slate-200 text-xs">底層數據參考</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-700/70">
-                          {results.map((res) => (
-                            <tr key={res.id} className="hover:bg-slate-750">
-                              <td className="p-3 font-bold text-white whitespace-nowrap sticky left-0 bg-slate-800 z-10">{res.symbol}</td>
-                              
-                              {/* 買進訊號 */}
-                              <td className="p-3 whitespace-nowrap">
-                                <span className={`px-3 py-1 rounded-full text-sm font-bold border ${
-                                  res.buy_signal === "大筆買進" ? "bg-red-500/30 text-red-300 border-red-500" :
-                                  res.buy_signal === "分批買進" ? "bg-orange-500/20 text-orange-300 border-orange-500" :
-                                  "bg-slate-700 text-slate-400 border-slate-600 font-normal"
-                                }`}>
-                                  {res.buy_signal}
-                                </span>
-                              </td>
+                          {results.map((res) => {
+                            // 動能排名專屬視覺設定
+                            let rankBadge = "bg-blue-900/40 text-blue-300 border-blue-800";
+                            if (res.momentum_rank === "第 1 名") rankBadge = "bg-yellow-500/30 text-yellow-400 border-yellow-500 font-bold shadow-[0_0_10px_rgba(234,179,8,0.3)]";
+                            else if (res.momentum_rank === "第 2 名") rankBadge = "bg-slate-300/30 text-slate-200 border-slate-400 font-bold";
+                            else if (res.momentum_rank === "第 3 名") rankBadge = "bg-orange-700/40 text-orange-300 border-orange-700 font-bold";
+                            else if (res.momentum_rank === "不投資") rankBadge = "bg-slate-700 text-slate-400 border-slate-600 line-through";
+                            else if (res.momentum_rank === "資料不足") rankBadge = "bg-slate-800 text-slate-500 border-slate-700";
 
-                              {/* 賣出訊號 */}
-                              <td className="p-3 whitespace-nowrap">
-                                <span className={`px-3 py-1 rounded-full text-sm font-bold border ${
-                                  res.sell_signal === "全數賣出" ? "bg-green-500/30 text-green-300 border-green-500" :
-                                  res.sell_signal === "減碼50%" ? "bg-teal-500/20 text-teal-300 border-teal-500" :
-                                  "bg-slate-700 text-slate-400 border-slate-600 font-normal"
-                                }`}>
-                                  {res.sell_signal}
-                                </span>
-                              </td>
+                            return (
+                              <tr key={res.id} className="hover:bg-slate-750">
+                                <td className="p-3 font-bold text-white whitespace-nowrap sticky left-0 bg-slate-800 z-10">{res.symbol}</td>
+                                
+                                {/* 動能排名 */}
+                                <td className="p-3 whitespace-nowrap">
+                                  <span className={`px-3 py-1 rounded-full text-xs md:text-sm border ${rankBadge}`}>
+                                    {res.momentum_rank}
+                                  </span>
+                                </td>
 
-                              {/* 底層數據參考 */}
-                              <td className="p-3 whitespace-nowrap text-xs text-slate-400">
-                                <div>月K: <span className={res.monthly_k < 30 ? "text-red-300 font-bold" : "text-white"}>{res.monthly_k}</span> | 月KD: {res.monthly_kd_cross === "GOLDEN" ? <span className="text-red-300">金叉</span> : res.monthly_kd_cross === "DEATH" ? <span className="text-green-300">死叉</span> : "無"}</div>
-                                <div className="mt-1">週MACD: {res.weekly_macd_cross === "DEATH" ? <span className="text-green-300">死叉</span> : res.weekly_macd_cross === "GOLDEN" ? <span className="text-red-300">金叉</span> : "無"}</div>
-                              </td>
+                                {/* 動能數值 */}
+                                <td className={`p-3 whitespace-nowrap font-mono text-sm ${res.momentum_score < 0 ? 'text-red-400' : 'text-green-400'}`}>
+                                  {res.momentum_score_str}
+                                </td>
+                                
+                                {/* 買進訊號 */}
+                                <td className="p-3 whitespace-nowrap">
+                                  <span className={`px-3 py-1 rounded-full text-sm font-bold border ${
+                                    res.buy_signal === "大筆買進" ? "bg-red-500/30 text-red-300 border-red-500" :
+                                    res.buy_signal === "分批買進" ? "bg-orange-500/20 text-orange-300 border-orange-500" :
+                                    "bg-slate-700 text-slate-400 border-slate-600 font-normal"
+                                  }`}>
+                                    {res.buy_signal}
+                                  </span>
+                                </td>
 
-                            </tr>
-                          ))}
+                                {/* 賣出訊號 */}
+                                <td className="p-3 whitespace-nowrap">
+                                  <span className={`px-3 py-1 rounded-full text-sm font-bold border ${
+                                    res.sell_signal === "全數賣出" ? "bg-green-500/30 text-green-300 border-green-500" :
+                                    res.sell_signal === "減碼50%" ? "bg-teal-500/20 text-teal-300 border-teal-500" :
+                                    "bg-slate-700 text-slate-400 border-slate-600 font-normal"
+                                  }`}>
+                                    {res.sell_signal}
+                                  </span>
+                                </td>
+
+                                {/* 底層數據參考 */}
+                                <td className="p-3 whitespace-nowrap text-xs text-slate-400">
+                                  <div>月K: <span className={res.monthly_k < 30 ? "text-red-300 font-bold" : "text-white"}>{res.monthly_k}</span> | 月KD: {res.monthly_kd_cross === "GOLDEN" ? <span className="text-red-300">金叉</span> : res.monthly_kd_cross === "DEATH" ? <span className="text-green-300">死叉</span> : "無"}</div>
+                                  <div className="mt-1">週MACD: {res.weekly_macd_cross === "DEATH" ? <span className="text-green-300">死叉</span> : res.weekly_macd_cross === "GOLDEN" ? <span className="text-red-300">金叉</span> : "無"}</div>
+                                </td>
+
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
