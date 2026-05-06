@@ -132,7 +132,7 @@ async def analyze_stocks(request: StockRequest):
             print(f"Error processing {symbol}: {e}")
             continue
             
-    # --- 執行排名系統 ----
+    # --- 執行排名系統 ---
     # 先依照動能分數由高到低排序
     raw_results.sort(key=lambda x: x['momentum_score'], reverse=True)
     
