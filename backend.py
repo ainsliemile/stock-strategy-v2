@@ -5,6 +5,7 @@ from typing import List
 import yfinance as yf
 import pandas as pd
 import uvicorn
+import os
 
 app = FastAPI()
 
@@ -169,4 +170,6 @@ async def analyze_stocks(request: StockRequest):
     return final_results
 
 if __name__ == "__main__":
-    uvicorn.run("backend:app", host="0.0.0.0", port=10000)
+    # 自動抓取 Render 動態分配的 Port，如果是在本地端測試則預設使用 10000
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run("backend:app", host="0.0.0.0", port=port)
