@@ -76,7 +76,7 @@
 
             try {
               // ⚠️⚠️⚠️ 記得把這裡換成您 stock-tracker-v2 在 Render 的網址！
-              const response = await fetch('https://【請替換為您的新RENDER網址】.onrender.com/api/analyze', {
+              const response = await fetch('https://my-stock-api-v2.onrender.com/api/analyze', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ symbols: activeSymbols }),
