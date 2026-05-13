@@ -118,15 +118,15 @@ async def analyze_stocks(request: StockRequest):
             elif weekly_macd_cross == "DEATH":
                 sell_signal = "減碼50%"
                 
-            # --- Papa Bear 動能指標計算 (3M, 6M, 12M 平均) ---
+            # --- Papa Bear 動能指標計算 (1M, 3M, 6M 平均) ---
             momentum_score = -999 # 預設為無效值
-            if len(monthly_hist) >= 13: # 確保有超過一年的資料
+            if len(monthly_hist) >= 7: # 確保有超過半年的資料
                 current_close = monthly_hist['Close'].iloc[-1]
-                # 回溯 3 個月、6 個月、12 個月的收盤價計算報酬率
+                # 回溯 1 個月、3 個月、6 個月的收盤價計算報酬率
+                ret_1m = (current_close / monthly_hist['Close'].iloc[-2]) - 1
                 ret_3m = (current_close / monthly_hist['Close'].iloc[-4]) - 1
                 ret_6m = (current_close / monthly_hist['Close'].iloc[-7]) - 1
-                ret_12m = (current_close / monthly_hist['Close'].iloc[-13]) - 1
-                momentum_score = (ret_3m + ret_6m + ret_12m) / 3
+                momentum_score = (ret_1m + ret_3m + ret_6m) / 3
                 
             raw_results.append({
                 "symbol": symbol,
