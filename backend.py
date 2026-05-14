@@ -9,7 +9,6 @@ import os
 
 app = FastAPI()
 
-# 設定 CORS，讓前端網頁可以順利連線
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,7 +25,6 @@ def calculate_kd(df, n=9):
     df['Lowest'] = df['Low'].rolling(window=n).min()
     df['Highest'] = df['High'].rolling(window=n).max()
     
-    # 處理除以零的極端情況 (若 9 個月內最高價等於最低價)
     denominator = df['Highest'] - df['Lowest']
     df['RSV'] = 100 * (df['Close'] - df['Lowest']) / denominator.replace(0, 1)
     df['RSV'] = df['RSV'].fillna(50)
@@ -48,18 +46,17 @@ def calculate_macd(df):
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp1 - exp2
     df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    # 增加 MACD 柱狀圖計算，用於判斷背離
+    df['Hist'] = df['MACD'] - df['Signal']
     return df
 
 def check_cross(line1, line2):
-    # 確保資料長度足夠，避免報錯
     if len(line1) < 3 or len(line2) < 3:
         return "NONE"
     
-    # 1. 檢查當下（包含未完結的當月/當週 K 棒）是否剛發生交叉
     current_golden = line1.iloc[-1] > line2.iloc[-1] and line1.iloc[-2] <= line2.iloc[-2]
     current_death = line1.iloc[-1] < line2.iloc[-1] and line1.iloc[-2] >= line2.iloc[-2]
     
-    # 2. 檢查上一根（剛收盤的完整 K 棒）是否發生交叉，且目前趨勢未變 (防漏抓機制)
     prev_golden = line1.iloc[-2] > line2.iloc[-2] and line1.iloc[-3] <= line2.iloc[-3] and line1.iloc[-1] > line2.iloc[-1]
     prev_death = line1.iloc[-2] < line2.iloc[-2] and line1.iloc[-3] >= line2.iloc[-3] and line1.iloc[-1] < line2.iloc[-1]
     
@@ -70,6 +67,23 @@ def check_cross(line1, line2):
         
     return "NONE"
 
+# 偵測週線底背離 (Bullish Divergence)
+def check_bullish_divergence(df):
+    if len(df) < 5: 
+        return False
+    # 觀察近 5 週的價格與 MACD 柱狀圖
+    recent_closes = df['Close'].iloc[-5:]
+    recent_hists = df['Hist'].iloc[-5:]
+    
+    min_close_idx = recent_closes.idxmin()
+    min_hist_idx = recent_hists.idxmin()
+    
+    # 如果 MACD 最低綠柱發生在價格最低點的「前面」(殺盤動能提早縮減)
+    # 且目前的柱狀圖正在收斂(上升)且仍處於水下
+    if min_hist_idx < min_close_idx and df['Hist'].iloc[-1] > df['Hist'].loc[min_hist_idx] and df['Hist'].iloc[-1] < 0:
+        return True
+    return False
+
 @app.post("/api/analyze")
 async def analyze_stocks(request: StockRequest):
     raw_results = []
@@ -77,40 +91,61 @@ async def analyze_stocks(request: StockRequest):
     for symbol in request.symbols:
         try:
             ticker = yf.Ticker(symbol)
-            # 抓取長天期資料以計算月線與週線
             hist = ticker.history(period="10y")
             if hist.empty:
                 continue
+            
+            # --- 計算年線 (240日) 乖離率 ---
+            current_bias = 0
+            if len(hist) >= 240:
+                hist['MA240'] = hist['Close'].rolling(window=240).mean()
+                current_bias = (hist['Close'].iloc[-1] - hist['MA240'].iloc[-1]) / hist['MA240'].iloc[-1]
                 
-            # === 取得週線資料並計算 MACD ===
-            weekly_hist = hist.resample('W').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
+            # === 取得週線資料並計算 MACD 與底背離 ===
+            # 注意：加上 'Volume':'sum' 以計算均量
+            weekly_hist = hist.resample('W').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last', 'Volume':'sum'}).dropna()
             weekly_hist = calculate_macd(weekly_hist)
             weekly_macd_cross = check_cross(weekly_hist['MACD'], weekly_hist['Signal'])
+            weekly_divergence = check_bullish_divergence(weekly_hist)
             
-            # === 取得月線資料並計算 KD ===
-            monthly_hist = hist.resample('ME').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
+            # === 取得月線資料並計算 KD 與均線/均量 ===
+            monthly_hist = hist.resample('ME').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last', 'Volume':'sum'}).dropna()
             monthly_hist = calculate_kd(monthly_hist)
             
-            # 確保資料長度足夠才進行判定
-            if len(monthly_hist) < 3:
+            if len(monthly_hist) < 5:
                 continue
                 
+            # 計算月線的 5月均線 與 5月均量 (用於右側確認)
+            monthly_hist['MA5'] = monthly_hist['Close'].rolling(window=5).mean()
+            monthly_hist['Vol5'] = monthly_hist['Volume'].rolling(window=5).mean()
+            
             monthly_k = round(monthly_hist['K'].iloc[-1], 1)
             monthly_kd_cross = check_cross(monthly_hist['K'], monthly_hist['D'])
             
-            # === 買進策略判斷 (加入 K 值防呆機制) ===
-            buy_signal = "觀望"
             current_k = monthly_hist['K'].iloc[-1]
             prev_k = monthly_hist['K'].iloc[-2]
+            current_close = monthly_hist['Close'].iloc[-1]
+            current_ma5 = monthly_hist['MA5'].iloc[-1]
+            current_vol = monthly_hist['Volume'].iloc[-1]
+            avg_vol5 = monthly_hist['Vol5'].iloc[-1]
             
-            if current_k < 30:
-                buy_signal = "分批買進"
+            # === 買進策略判斷 (三階段智慧建倉) ===
+            buy_signal = "觀望"
             
-            if monthly_kd_cross == "GOLDEN":
-                is_current_cross_valid = (monthly_hist['K'].iloc[-1] > monthly_hist['D'].iloc[-1]) and (current_k < 30)
-                is_prev_cross_valid = (monthly_hist['K'].iloc[-2] > monthly_hist['D'].iloc[-2]) and (prev_k < 30)
-                if is_current_cross_valid or is_prev_cross_valid:
-                    buy_signal = "大筆買進"
+            # 判斷是否為有效金叉
+            is_golden = (monthly_kd_cross == "GOLDEN") or (monthly_hist['K'].iloc[-1] > monthly_hist['D'].iloc[-1] and prev_k <= monthly_hist['D'].iloc[-2])
+            
+            # 階段三：右側重壓 (月 KD 金叉 且 放量站上 5月均線)
+            if is_golden and current_k < 40 and current_close > current_ma5 and current_vol > avg_vol5:
+                buy_signal = "右側重壓(50%)"
+                    
+            # 階段二：底部加碼 (月 K < 20 且 出現週線級別底背離)
+            elif current_k < 20 and weekly_divergence:
+                buy_signal = "底部加碼(30%)"
+                
+            # 階段一：左側建倉 (月 K < 30 且 距年線乖離率 < -15%)
+            elif current_k < 30 and current_bias < -0.15:
+                buy_signal = "左側建倉(20%)"
                     
             # === 賣出策略判斷 ===
             sell_signal = "持有"
@@ -120,10 +155,9 @@ async def analyze_stocks(request: StockRequest):
                 sell_signal = "減碼50%"
                 
             # --- Papa Bear 動能指標計算 (1M, 3M, 6M 平均) ---
-            momentum_score = -999 # 預設為無效值
-            if len(monthly_hist) >= 7: # 確保有超過半年的資料
+            momentum_score = -999 
+            if len(monthly_hist) >= 7: 
                 current_close = monthly_hist['Close'].iloc[-1]
-                # 回溯 1 個月、3 個月、6 個月的收盤價計算報酬率
                 ret_1m = (current_close / monthly_hist['Close'].iloc[-2]) - 1
                 ret_3m = (current_close / monthly_hist['Close'].iloc[-4]) - 1
                 ret_6m = (current_close / monthly_hist['Close'].iloc[-7]) - 1
@@ -136,7 +170,7 @@ async def analyze_stocks(request: StockRequest):
                 "monthly_k": monthly_k,
                 "monthly_kd_cross": monthly_kd_cross,
                 "weekly_macd_cross": weekly_macd_cross,
-                "momentum_score": momentum_score # 儲存原始數值供排序
+                "momentum_score": momentum_score 
             })
             
         except Exception as e:
@@ -144,7 +178,6 @@ async def analyze_stocks(request: StockRequest):
             continue
             
     # --- 執行排名系統 ---
-    # 先依照動能分數由高到低排序
     raw_results.sort(key=lambda x: x['momentum_score'], reverse=True)
     
     final_results = []
@@ -152,13 +185,11 @@ async def analyze_stocks(request: StockRequest):
     
     for item in raw_results:
         score = item['momentum_score']
-        
-        # 格式化數值與判定排名
         if score == -999:
             item['momentum_rank'] = "資料不足"
             item['momentum_score_str'] = "-"
         elif score < 0:
-            item['momentum_rank'] = "不投資" # 客製化條件：小於0顯示不投資
+            item['momentum_rank'] = "不投資" 
             item['momentum_score_str'] = f"{score * 100:.2f}%"
         else:
             item['momentum_rank'] = f"第 {current_rank} 名"
@@ -170,6 +201,5 @@ async def analyze_stocks(request: StockRequest):
     return final_results
 
 if __name__ == "__main__":
-    # 自動抓取 Render 動態分配的 Port，如果是在本地端測試則預設使用 10000
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run("backend:app", host="0.0.0.0", port=port)
