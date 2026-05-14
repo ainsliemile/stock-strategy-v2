@@ -1,4 +1,5 @@
 import os
+import math
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -9,6 +10,7 @@ import uvicorn
 import concurrent.futures
 import time
 import random
+import requests
 
 app = FastAPI()
 
@@ -20,8 +22,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 🌟 新增：給伺服器一個首頁，消除 404 錯誤，並確認伺服器存活
+@app.get("/")
+def read_root():
+    return {"status": "success", "message": "熊爸爸動能與波段 API 伺服器 (V2) 運作正常！🚀"}
+
 class StockRequest(BaseModel):
     symbols: List[str]
+
+# --- 偽裝術：設定 Custom Session 讓 Yahoo 覺得我們是真人瀏覽器 ---
+session = requests.Session()
+session.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+})
+
+def clean_float(val):
+    """處理 NaN 與 Inf，避免 JSON 解析崩潰"""
+    if pd.isna(val) or math.isnan(val) or math.isinf(val):
+        return 0.0
+    return float(val)
 
 def calculate_kd(df, n=9):
     df = df.copy()
@@ -83,36 +102,39 @@ def check_bullish_divergence(df):
     return False
 
 def fetch_data_with_retry(symbol, retries=3):
-    """
-    帶有重試機制與隨機延遲的資料抓取函數
-    """
     for attempt in range(retries):
         try:
-            # 隨機延遲 0.1 到 0.5 秒，避免同時發送過多請求
-            time.sleep(random.uniform(0.1, 0.5)) 
-            ticker = yf.Ticker(symbol)
+            time.sleep(random.uniform(0.1, 0.4))
+            # 加上 session 進行偽裝
+            ticker = yf.Ticker(symbol, session=session)
             hist = ticker.history(period="10y")
             if not hist.empty:
                 return hist
         except Exception as e:
             print(f"Attempt {attempt + 1} failed for {symbol}: {e}")
-            if attempt < retries - 1:
-                # 失敗後等待較長時間再試 (指數退避)
-                time.sleep(2 ** attempt) 
-    return pd.DataFrame() # 重試失敗回傳空 DataFrame
+            time.sleep(1)
+    return pd.DataFrame()
 
 def process_symbol(symbol):
     try:
-        # 使用帶有重試機制的函數抓取資料
         hist = fetch_data_with_retry(symbol)
         
+        # 🛡️ 錯誤顯影機制：就算被擋，也要讓前端顯示出來！
         if hist.empty:
-            return None
+            return {
+                "symbol": symbol,
+                "buy_signal": "無資料/IP遭擋",
+                "sell_signal": "-",
+                "monthly_k": 0.0,
+                "monthly_kd_cross": "-",
+                "weekly_macd_cross": "-",
+                "momentum_score": -999.0
+            }
             
         current_bias = 0.0
         if len(hist) >= 240:
             hist['MA240'] = hist['Close'].rolling(window=240).mean()
-            current_bias = float((hist['Close'].iloc[-1] - hist['MA240'].iloc[-1]) / hist['MA240'].iloc[-1])
+            current_bias = clean_float((hist['Close'].iloc[-1] - hist['MA240'].iloc[-1]) / hist['MA240'].iloc[-1])
             
         agg_dict = {'Open':'first', 'High':'max', 'Low':'min', 'Close':'last', 'Volume':'sum'}
         weekly_hist = hist.resample('W').agg(agg_dict).dropna()
@@ -128,23 +150,31 @@ def process_symbol(symbol):
         monthly_hist = calculate_kd(monthly_hist)
         
         if len(monthly_hist) < 5:
-            return None
+             return {
+                "symbol": symbol,
+                "buy_signal": "上市時間太短",
+                "sell_signal": "-",
+                "monthly_k": 0.0,
+                "monthly_kd_cross": "-",
+                "weekly_macd_cross": "-",
+                "momentum_score": -999.0
+            }
             
         monthly_hist['MA5'] = monthly_hist['Close'].rolling(window=5).mean()
         monthly_hist['Vol5'] = monthly_hist['Volume'].rolling(window=5).mean()
         
-        monthly_k = round(float(monthly_hist['K'].iloc[-1]), 1)
+        monthly_k = round(clean_float(monthly_hist['K'].iloc[-1]), 1)
         monthly_kd_cross = check_cross(monthly_hist['K'], monthly_hist['D'])
         
-        current_k = float(monthly_hist['K'].iloc[-1])
-        prev_k = float(monthly_hist['K'].iloc[-2])
-        current_close = float(monthly_hist['Close'].iloc[-1])
-        current_ma5 = float(monthly_hist['MA5'].iloc[-1])
-        current_vol = float(monthly_hist['Volume'].iloc[-1])
-        avg_vol5 = float(monthly_hist['Vol5'].iloc[-1])
+        current_k = clean_float(monthly_hist['K'].iloc[-1])
+        prev_k = clean_float(monthly_hist['K'].iloc[-2])
+        current_close = clean_float(monthly_hist['Close'].iloc[-1])
+        current_ma5 = clean_float(monthly_hist['MA5'].iloc[-1])
+        current_vol = clean_float(monthly_hist['Volume'].iloc[-1])
+        avg_vol5 = clean_float(monthly_hist['Vol5'].iloc[-1])
         
         buy_signal = "觀望"
-        is_golden = (monthly_kd_cross == "GOLDEN") or (current_k > float(monthly_hist['D'].iloc[-1]) and prev_k <= float(monthly_hist['D'].iloc[-2]))
+        is_golden = (monthly_kd_cross == "GOLDEN") or (current_k > clean_float(monthly_hist['D'].iloc[-1]) and prev_k <= clean_float(monthly_hist['D'].iloc[-2]))
         
         if is_golden and current_k < 40 and current_close > current_ma5 and current_vol > avg_vol5:
             buy_signal = "右側重壓(50%)"
@@ -161,10 +191,10 @@ def process_symbol(symbol):
             
         momentum_score = -999.0 
         if len(monthly_hist) >= 7: 
-            ret_1m = float(current_close / float(monthly_hist['Close'].iloc[-2])) - 1
-            ret_3m = float(current_close / float(monthly_hist['Close'].iloc[-4])) - 1
-            ret_6m = float(current_close / float(monthly_hist['Close'].iloc[-7])) - 1
-            momentum_score = float((ret_1m + ret_3m + ret_6m) / 3)
+            ret_1m = clean_float(current_close / clean_float(monthly_hist['Close'].iloc[-2])) - 1
+            ret_3m = clean_float(current_close / clean_float(monthly_hist['Close'].iloc[-4])) - 1
+            ret_6m = clean_float(current_close / clean_float(monthly_hist['Close'].iloc[-7])) - 1
+            momentum_score = clean_float((ret_1m + ret_3m + ret_6m) / 3)
             
         return {
             "symbol": symbol,
@@ -177,13 +207,21 @@ def process_symbol(symbol):
         }
     except Exception as e:
         print(f"Error processing {symbol}: {e}")
-        return None
+        # 🛡️ 如果發生任何未知錯誤，一樣要顯示出來！
+        return {
+            "symbol": symbol,
+            "buy_signal": "運算錯誤",
+            "sell_signal": "-",
+            "monthly_k": 0.0,
+            "monthly_kd_cross": "-",
+            "weekly_macd_cross": "-",
+            "momentum_score": -999.0
+        }
 
 @app.post("/api/analyze")
 async def analyze_stocks(request: StockRequest):
     raw_results = []
     
-    # 將執行緒數量調降為 10，兼顧速度與安全性
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(process_symbol, sym): sym for sym in request.symbols}
         for future in concurrent.futures.as_completed(futures):
