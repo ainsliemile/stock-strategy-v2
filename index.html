@@ -69,7 +69,7 @@
 
             try {
               // 連線至您的 Render 後端 API
-              const response = await fetch('https://stock-tracker-api-ygci.onrender.com/api/analyze', {
+              const response = await fetch('https://my-stock-api-v2.onrender.com/api/analyze', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ symbols: activeSymbols }),
