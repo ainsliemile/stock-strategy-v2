@@ -10,7 +10,6 @@ import uvicorn
 import concurrent.futures
 import time
 import random
-import requests
 
 app = FastAPI()
 
@@ -29,10 +28,7 @@ def read_root():
 class StockRequest(BaseModel):
     symbols: List[str]
 
-session = requests.Session()
-session.headers.update({
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-})
+# 這裡把手動設定 Session 的偽裝術刪除了，完全交給 yfinance 原廠的防擋機制來處理！
 
 def clean_float(val):
     if pd.isna(val) or math.isnan(val) or math.isinf(val):
@@ -93,7 +89,8 @@ def fetch_data_with_retry(symbol, retries=3):
     for attempt in range(retries):
         try:
             time.sleep(random.uniform(0.1, 0.4))
-            ticker = yf.Ticker(symbol, session=session)
+            # 讓 yfinance 自己處理連線，不再強制塞入 session
+            ticker = yf.Ticker(symbol)
             hist = ticker.history(period="10y")
             if not hist.empty:
                 return hist
@@ -104,7 +101,6 @@ def fetch_data_with_retry(symbol, retries=3):
 
 def process_symbol(symbol):
     try:
-        # print(f"🔍 開始處理: {symbol}...", flush=True) # 隱藏過多的開始訊息以保持版面乾淨
         hist = fetch_data_with_retry(symbol)
         
         if hist.empty:
