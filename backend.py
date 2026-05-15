@@ -97,7 +97,9 @@ def process_symbol(symbol):
         if hist.empty:
             return {"symbol": symbol, "buy_signal": "無資料", "sell_signal": "-", "momentum_score": -999.0}
             
-        # 計算年線乖離率
+        # 取得當前股價 (最後一筆收盤價)
+        current_price = round(clean_float(hist['Close'].iloc[-1]), 2)
+            
         current_bias = 0.0
         if len(hist) >= 240:
             ma240 = hist['Close'].rolling(window=240).mean().iloc[-1]
@@ -108,23 +110,22 @@ def process_symbol(symbol):
         weekly_macd_cross = check_cross(weekly_hist['MACD'], weekly_hist['Signal'])
         weekly_divergence = check_bullish_divergence(weekly_hist)
         
-        # --- 新增：四階段撤退邏輯所需的 20 週線與 MACD 柱狀體收縮判定 ---
+        # 20週線與 MACD 柱狀體狀態判斷
         current_w_ma20 = 0.0
         if len(weekly_hist) >= 20:
             weekly_hist['MA20'] = weekly_hist['Close'].rolling(window=20).mean()
             current_w_ma20 = clean_float(weekly_hist['MA20'].iloc[-1])
             
+        weekly_macd_hist_val = clean_float(weekly_hist['Hist'].iloc[-1])
         weekly_hist_shrinking = False
         if len(weekly_hist) >= 3:
-            h1 = clean_float(weekly_hist['Hist'].iloc[-1]) # 本週
-            h2 = clean_float(weekly_hist['Hist'].iloc[-2]) # 上週
-            h3 = clean_float(weekly_hist['Hist'].iloc[-3]) # 上上週
-            # 若原本大於0 (多頭)，且連續兩週柱狀體遞減，即為動能收縮
+            h1 = clean_float(weekly_hist['Hist'].iloc[-1])
+            h2 = clean_float(weekly_hist['Hist'].iloc[-2])
+            h3 = clean_float(weekly_hist['Hist'].iloc[-3])
             if h3 > 0 and h2 < h3 and h1 < h2:
                 weekly_hist_shrinking = True
                 
         current_weekly_close = clean_float(weekly_hist['Close'].iloc[-1])
-        # ---------------------------------------------------------------
         
         try:
             monthly_hist = hist.resample('ME').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last', 'Volume':'sum'}).dropna()
@@ -138,7 +139,6 @@ def process_symbol(symbol):
         m_k = round(clean_float(monthly_hist['K'].iloc[-1]), 1)
         m_kd_cross = check_cross(monthly_hist['K'], monthly_hist['D'])
         
-        # 計算 K, D 數值用於精準判斷死叉與金叉
         current_k = clean_float(monthly_hist['K'].iloc[-1])
         prev_k = clean_float(monthly_hist['K'].iloc[-2])
         current_d = clean_float(monthly_hist['D'].iloc[-1])
@@ -147,7 +147,6 @@ def process_symbol(symbol):
         is_golden = (m_kd_cross == "GOLDEN") or (current_k > current_d and prev_k <= prev_d)
         is_m_death = (m_kd_cross == "DEATH") or (current_k < current_d and prev_k >= prev_d)
         
-        # 買進訊號判斷
         buy_signal = "觀望"
         if is_golden and m_k < 40 and float(monthly_hist['Close'].iloc[-1]) > float(monthly_hist['MA5'].iloc[-1]) and float(monthly_hist['Volume'].iloc[-1]) > float(monthly_hist['Vol5'].iloc[-1]):
             buy_signal = "右側重壓(50%)"
@@ -156,21 +155,16 @@ def process_symbol(symbol):
         elif m_k < 30 and current_bias < -0.15:
             buy_signal = "左側建倉(20%)"
             
-        # === 優化後的四階段賣出訊號判斷 (由大到小優先級判定) ===
         sell_signal = "持有"
-        
-        # 第一優先級：月線大趨勢
         if is_m_death:
             if current_w_ma20 > 0 and current_weekly_close < current_w_ma20:
-                sell_signal = "清倉(100%)" # 指標與價格雙雙轉空
+                sell_signal = "清倉(100%)"
             else:
-                sell_signal = "緊急減碼(50%)" # 月 KD 死叉，但 20 週線有守 (高檔鈍化)
-                
-        # 第二優先級：週線中級趨勢
+                sell_signal = "緊急減碼(50%)"
         elif weekly_macd_cross == "DEATH":
-            sell_signal = "頂部減碼(30%)" # 週 MACD 正式死叉
+            sell_signal = "頂部減碼(30%)"
         elif weekly_hist_shrinking:
-            sell_signal = "預警減碼(20%)" # 動能首度連續收縮
+            sell_signal = "預警減碼(20%)"
             
         momentum_score = -999.0 
         if len(monthly_hist) >= 7: 
@@ -181,11 +175,15 @@ def process_symbol(symbol):
             
         return {
             "symbol": symbol,
+            "current_price": current_price,
             "buy_signal": buy_signal,
             "sell_signal": sell_signal,
             "monthly_k": m_k,
             "monthly_kd_cross": m_kd_cross,
             "weekly_macd_cross": weekly_macd_cross,
+            "weekly_macd_hist": round(weekly_macd_hist_val, 2),
+            "weekly_hist_shrinking": weekly_hist_shrinking,
+            "weekly_ma20": round(current_w_ma20, 2),
             "weekly_divergence": weekly_divergence,
             "bias_val": round(current_bias * 100, 2),
             "momentum_score": momentum_score 
@@ -195,7 +193,6 @@ def process_symbol(symbol):
 
 @app.post("/api/analyze")
 async def analyze_stocks(request: StockRequest):
-    print(f"🟢 請求數量: {len(request.symbols)}", flush=True)
     raw_results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(process_symbol, sym): sym for sym in request.symbols}
