@@ -15,7 +15,8 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        const apiKey = "AIzaSyCDwTGsDbp2Mth7CFH6J4YU2IX5Jvnii9o"; 
+        // 🔑 記得在這裡填入您的 Gemini API 金鑰！(例如: "AIzaSy...")
+        const apiKey = "請在此填入您的Gemini_API_Key"; 
 
         const App = () => {
           const [inputs, setInputs] = useState(Array(110).fill(""));
@@ -96,22 +97,41 @@
             }
           };
 
+          // ✨ AI API 核心函數修復版 (加入嚴格錯誤顯影機制)
           const callGeminiAPI = async (promptText) => {
             if (!apiKey || apiKey === "請在此填入您的Gemini_API_Key") {
-              return "⚠️ 請先在 index.html 程式碼中設定您的 Gemini API 金鑰！";
+              return "⚠️ 系統提示：請先在 index.html 程式碼最上方（約第 19 行）設定您的 Gemini API 金鑰！";
             }
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+            
+            // 替換為最穩定版本的模型
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
             const payload = {
               contents: [{ parts: [{ text: promptText }] }],
               systemInstruction: { 
                 parts: [{ text: "你是一位資深的量化交易員與市場分析師。請用繁體中文回答，語氣專業、客觀且條理分明。絕對不要給出明確的投資買賣建議，僅針對提供的技術指標與動能數據進行客觀解讀。" }] 
               }
             };
+            
             try {
-              const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+              const res = await fetch(url, { 
+                method: "POST", 
+                headers: { "Content-Type": "application/json" }, 
+                body: JSON.stringify(payload) 
+              });
+              
               const data = await res.json();
-              return data.candidates?.[0]?.content?.parts?.[0]?.text || "AI 暫時無法產生回應。";
-            } catch (err) { return "❌ AI 分析失敗。"; }
+              
+              // 🛡️ 如果 API 伺服器拒絕 (例如 Key 錯誤、超標等)，強制印出真實原因
+              if (!res.ok) {
+                console.error("Gemini API Error Response:", data);
+                return `❌ AI 伺服器連線被拒絕！\n\n錯誤代碼：${data.error?.code || '未知'}\n錯誤訊息：${data.error?.message || '未知的 API 錯誤'}\n\n👉 解決方案：請檢查您的 API Key 是否輸入正確、是否被禁用，或是有複製到空白字元。`;
+              }
+              
+              return data.candidates?.[0]?.content?.parts?.[0]?.text || "AI 暫時無法產生回應，請稍後再試。";
+            } catch (err) { 
+              console.error("Fetch Error:", err);
+              return "❌ 網路連線錯誤，無法呼叫 Google AI 伺服器，請檢查您的網路狀態。"; 
+            }
           };
 
           const generateGlobalReport = async () => {
