@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>波段與動能數據透視面板 (AI 輔助版)</title>
+    <title>波段與動能雙重策略面板</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -15,52 +15,41 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        // 🔑 記得在這裡填入您的 Gemini API 金鑰！(例如: "AIzaSy...")
-        const apiKey = "請在此填入您的Gemini_API_Key"; 
-
         const App = () => {
           const [inputs, setInputs] = useState(Array(110).fill(""));
-          const [default100, setDefault100] = useState([]);
           const [results, setResults] = useState([]);
           const [isLoading, setIsLoading] = useState(false);
           const [lastUpdateTime, setLastUpdateTime] = useState(null);
-          const [fetchStatus, setFetchStatus] = useState("正在與 Papa Bear 系統連線...");
-
-          const [aiContent, setAiContent] = useState("");
-          const [isAiLoading, setIsAiLoading] = useState(false);
-          const [showAiModal, setShowAiModal] = useState(false);
+          const [fetchStatus, setFetchStatus] = useState("正在與 Papa Bear 系統連線，抓取本週最強 100 檔標的...");
 
           useEffect(() => {
-            fetchTopMomentum();
-          }, []);
-
-          const fetchTopMomentum = async () => {
+            const fetchTopMomentum = async () => {
               try {
                 const timestamp = new Date().getTime();
                 const response = await fetch(`https://ainsliemile.github.io/papa-bear-dashboard/momentum_history.json?t=${timestamp}`);
                 const data = await response.json();
-                let all = [];
+                
+                let allTickers = [];
                 if (data.current_all) {
-                  for (const cat in data.current_all) all = all.concat(data.current_all[cat]);
+                  for (const category in data.current_all) {
+                    allTickers = allTickers.concat(data.current_all[category]);
+                  }
                 }
-                all.sort((a, b) => b.momentum - a.momentum);
-                const top100 = all.slice(0, 100).map(item => item.symbol);
-                setDefault100(top100);
-                loadDefault(top100);
-                setFetchStatus(`✅ 成功載入本週強勢股 (最新更新: ${data.update_time})`);
+                
+                allTickers.sort((a, b) => b.momentum - a.momentum);
+                const top100Symbols = allTickers.slice(0, 100).map(item => item.symbol);
+                const newInputs = [...top100Symbols, ...Array(110 - top100Symbols.length).fill("")];
+                
+                setInputs(newInputs);
+                setFetchStatus(`✅ 成功載入本週全市場動能前 100 名標的 (最新更新: ${data.update_time})`);
               } catch (error) {
-                setFetchStatus("⚠️ 無法載入預設名單。");
+                console.error("無法載入動能資料:", error);
+                setFetchStatus("⚠️ 無法連線至 Papa Bear 系統，請先手動輸入標的。");
               }
-          };
-
-          const loadDefault = (list = default100) => {
-            const newInputs = [...list, ...Array(110 - list.length).fill("")];
-            setInputs(newInputs);
-          };
-
-          const handleClearAll = () => {
-            setInputs(Array(110).fill(""));
-          };
+            };
+            
+            fetchTopMomentum();
+          }, []);
 
           const handleInputChange = (index, value) => {
             const newInputs = [...inputs];
@@ -74,86 +63,40 @@
             const activeSymbols = inputs.filter(symbol => symbol !== "");
 
             if (activeSymbols.length === 0) {
-              alert("請至少輸入一檔標的代碼！");
               setIsLoading(false);
               return;
             }
 
             try {
+              // 連線至您的 Render 後端 API
               const response = await fetch('https://my-stock-api-v2.onrender.com/api/analyze', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ symbols: activeSymbols }),
               });
+
               if (!response.ok) throw new Error("伺服器連線異常");
+
               const data = await response.json();
-              setResults(data);
+              setResults(data.map((item, index) => ({ ...item, id: index })));
               setLastUpdateTime(new Date().toLocaleTimeString());
             } catch (error) {
-              setAiContent("❌ 連線失敗，請確認您的 Render 雲端伺服器是否處於正常運作狀態！");
-              setShowAiModal(true);
+              alert("❌ 連線失敗，請確認您的 Render 雲端伺服器是否處於正常運作狀態！");
             } finally {
               setIsLoading(false);
             }
           };
 
-          // ✨ AI API 核心函數修復版 (加入嚴格錯誤顯影機制)
-          const callGeminiAPI = async (promptText) => {
-            if (!apiKey || apiKey === "請在此填入您的Gemini_API_Key") {
-              return "⚠️ 系統提示：請先在 index.html 程式碼最上方（約第 19 行）設定您的 Gemini API 金鑰！";
+          // 嚴格三階段買進訊號顏色判定
+          const getBuyBadgeStyle = (signal) => {
+            if (signal === "右側重壓(50%)") {
+              return "bg-red-500/30 text-red-300 border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]";
+            } else if (signal === "底部加碼(30%)") {
+              return "bg-pink-500/30 text-pink-300 border-pink-500";
+            } else if (signal === "左側建倉(20%)") {
+              return "bg-orange-500/30 text-orange-300 border-orange-500";
             }
-            
-            // 替換為最穩定版本的模型
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-            const payload = {
-              contents: [{ parts: [{ text: promptText }] }],
-              systemInstruction: { 
-                parts: [{ text: "你是一位資深的量化交易員與市場分析師。請用繁體中文回答，語氣專業、客觀且條理分明。絕對不要給出明確的投資買賣建議，僅針對提供的技術指標與動能數據進行客觀解讀。" }] 
-              }
-            };
-            
-            try {
-              const res = await fetch(url, { 
-                method: "POST", 
-                headers: { "Content-Type": "application/json" }, 
-                body: JSON.stringify(payload) 
-              });
-              
-              const data = await res.json();
-              
-              // 🛡️ 如果 API 伺服器拒絕 (例如 Key 錯誤、超標等)，強制印出真實原因
-              if (!res.ok) {
-                console.error("Gemini API Error Response:", data);
-                return `❌ AI 伺服器連線被拒絕！\n\n錯誤代碼：${data.error?.code || '未知'}\n錯誤訊息：${data.error?.message || '未知的 API 錯誤'}\n\n👉 解決方案：請檢查您的 API Key 是否輸入正確、是否被禁用，或是有複製到空白字元。`;
-              }
-              
-              return data.candidates?.[0]?.content?.parts?.[0]?.text || "AI 暫時無法產生回應，請稍後再試。";
-            } catch (err) { 
-              console.error("Fetch Error:", err);
-              return "❌ 網路連線錯誤，無法呼叫 Google AI 伺服器，請檢查您的網路狀態。"; 
-            }
-          };
-
-          const generateGlobalReport = async () => {
-            if (results.length === 0) return;
-            setIsAiLoading(true);
-            setShowAiModal(true);
-            setAiContent("✨ Gemini AI 正在深度分析當前盤勢，請稍候...");
-            const top10 = results.slice(0, 10).map(r => `- ${r.symbol}: 動能 ${r.momentum_score_str}, 買進 [${r.buy_signal}], 賣出 [${r.sell_signal}]`).join('\n');
-            const prompt = `這是根據我的動力量化策略選出的前 10 名強勢標的：\n${top10}\n請以此為依據，給我一段大約 200 字的簡短綜合盤勢觀察。`;
-            const text = await callGeminiAPI(prompt);
-            setAiContent(text);
-            setIsAiLoading(false);
-          };
-
-          const generateStockReport = async (stock) => {
-            setIsAiLoading(true);
-            setShowAiModal(true);
-            setAiContent(`✨ Gemini AI 正在專屬診斷 ${stock.symbol}，請稍候...`);
-            const prompt = `請為標的「${stock.symbol}」提供技術診斷。數據：動能 ${stock.momentum_score_str}, 月K ${stock.monthly_k}, 乖離率 ${stock.bias_val}%, 週背離 ${stock.weekly_divergence ? '有' : '無'}, 買進階段 ${stock.buy_signal}, 賣出階段 ${stock.sell_signal}。`;
-            const text = await callGeminiAPI(prompt);
-            setAiContent(text);
-            setIsAiLoading(false);
+            return "bg-slate-700 text-slate-400 border-slate-600 font-normal";
           };
 
           return (
@@ -162,27 +105,40 @@
                 <div className="max-w-7xl mx-auto">
                   <header className="mb-6 border-b border-slate-700 pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <h1 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-3">
-                      <span className="text-yellow-400">🐻</span> 全自動百大動能 + 數據透視面板
+                      <span className="text-yellow-400">🐻</span> 全自動百大動能 + 嚴格波段狙擊面板
                     </h1>
                   </header>
 
+                  {/* 策略公式說明區塊 */}
+                  <div className="bg-slate-800 rounded-xl p-4 shadow-xl mb-6 border border-slate-700 text-sm text-slate-300">
+                    <p className="mb-2"><span className="text-yellow-400 font-bold">💡 動能公式說明：</span> 動能排名依據標的之 <strong>(1個月 + 3個月 + 6個月) 總報酬率平均值</strong> 排序。數值 &gt; 0 才排名，&lt; 0 則「不投資」。</p>
+                    <p><span className="text-blue-400 font-bold">🛡️ 三階段智慧建倉系統：</span> 結合乖離率、週底背離與價量突破，過濾低檔鈍化風險，精準劃分【左側 20%】、【底部 30%】、【右側 50%】資金配比。</p>
+                  </div>
+
                   <section className="bg-slate-800 rounded-xl p-4 md:p-6 shadow-xl mb-8 border border-slate-700">
-                    <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-4 gap-4">
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
                       <div>
-                        <h2 className="text-lg font-semibold text-blue-300">股票輸入區 (110格)</h2>
+                        <h2 className="text-lg font-semibold text-blue-300">系統自動匯入名單 (100檔強勢股 + 10格自訂區)</h2>
                         <p className="text-sm text-slate-400 mt-1">{fetchStatus}</p>
                       </div>
-                      <div className="flex flex-wrap gap-2 w-full lg:w-auto">
-                        <button onClick={handleClearAll} className="flex-1 lg:flex-none px-4 py-2 bg-red-900/40 hover:bg-red-800/60 text-red-300 border border-red-700/50 rounded-lg text-sm font-bold">🗑️ 清空全部</button>
-                        <button onClick={() => loadDefault()} className="flex-1 lg:flex-none px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-bold">🔄 載入預設 100 檔</button>
-                        <button onClick={handleExecute} disabled={isLoading} className="w-full lg:w-auto px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold shadow-[0_0_15px_rgba(37,99,235,0.4)]">
-                          {isLoading ? "運算中..." : "開始分析"}
-                        </button>
-                      </div>
+                      <button
+                        onClick={handleExecute}
+                        disabled={isLoading}
+                        className={`w-full md:w-auto px-6 py-3 rounded-lg font-bold transition-all ${
+                          isLoading ? "bg-slate-600 text-slate-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]"
+                        }`}
+                      >
+                        {isLoading ? "雲端伺服器運算中..." : "開始執行 110 檔策略掃描"}
+                      </button>
                     </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 h-64 overflow-y-auto pr-2 custom-scrollbar">
+                    
+                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 h-72 md:h-80 overflow-y-auto pr-2 custom-scrollbar">
                       {inputs.map((val, idx) => (
-                        <input key={idx} type="text" value={val} onChange={(e) => handleInputChange(idx, e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-white uppercase" placeholder={`${idx + 1}.`}/>
+                        <input key={idx} type="text" value={val}
+                          onChange={(e) => handleInputChange(idx, e.target.value)}
+                          placeholder={`${idx + 1}. ${idx < 100 ? '動能強勢股' : '自訂備用格'}`}
+                          className={`w-full bg-slate-900 border ${idx < 100 ? 'border-blue-900/60' : 'border-slate-600 border-dashed'} rounded p-2 text-sm text-white focus:outline-none focus:border-blue-500 uppercase`}
+                        />
                       ))}
                     </div>
                   </section>
@@ -191,78 +147,101 @@
                     <section className="bg-slate-800 rounded-xl p-4 shadow-xl border border-slate-700 overflow-hidden">
                       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3">
                         <div>
-                          <h2 className="text-lg font-semibold text-blue-300">掃描結果 (已依動能排序)</h2>
-                          <span className="text-xs text-slate-400">更新時間: {lastUpdateTime}</span>
+                          <h2 className="text-lg font-semibold text-blue-300 flex items-center gap-2">
+                            掃描結果 (已自動依據動能排序)
+                          </h2>
+                          <span className="text-xs text-slate-400">運算完成: {lastUpdateTime}</span>
                         </div>
-                        <button onClick={generateGlobalReport} disabled={isAiLoading} className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-semibold rounded-lg shadow-xl">✨ AI 盤勢總結</button>
                       </div>
-                      <div className="overflow-x-auto h-[600px] overflow-y-auto custom-scrollbar">
-                        <table className="min-w-full text-left">
-                          <thead className="sticky top-0 bg-slate-900 z-20">
-                            <tr className="border-y border-slate-600 text-xs">
-                              <th className="p-3 sticky left-0 bg-slate-900">代碼</th>
-                              <th className="p-3 text-white">當前股價</th>
-                              <th className="p-3 text-yellow-300">動能排名</th>
-                              <th className="p-3 text-blue-300">買進建倉</th>
-                              <th className="p-3 text-green-300">賣出撤退階段</th>
-                              <th className="p-3 text-orange-200">買進數據 (月K/KD/乖離/週背離)</th>
-                              <th className="p-3 text-teal-200">賣出數據 (週MACD/柱狀/20週線)</th>
-                              <th className="p-3 text-purple-300 text-center sticky right-0 bg-slate-900">AI 助理</th>
+                      
+                      <div className="overflow-x-auto -mx-4 md:mx-0 px-4 md:px-0 h-[600px] overflow-y-auto custom-scrollbar">
+                        <table className="min-w-full text-left border-collapse">
+                          <thead className="sticky top-0 bg-slate-900 z-20 shadow-md">
+                            <tr className="border-y border-slate-600">
+                              <th className="p-3 font-semibold text-slate-200 sticky left-0 bg-slate-900 z-30">標的代碼</th>
+                              <th className="p-3 font-semibold text-yellow-300 text-sm whitespace-nowrap">動能排名</th>
+                              <th className="p-3 font-semibold text-slate-300 text-sm whitespace-nowrap">動能均值(1/3/6月)</th>
+                              <th className="p-3 font-semibold text-slate-200">買進建倉階段</th>
+                              <th className="p-3 font-semibold text-slate-200">賣出訊號</th>
+                              <th className="p-3 font-semibold text-slate-200 text-xs">底層數據</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-700/70">
-                            {results.map((res, i) => (
-                              <tr key={i} className="hover:bg-slate-750 text-sm">
-                                <td className="p-3 font-bold sticky left-0 bg-slate-800">{res.symbol}</td>
-                                <td className="p-3 font-mono text-white">{res.current_price}</td>
-                                <td className="p-3 whitespace-nowrap">
-                                  <span className="px-2 py-0.5 rounded bg-slate-700 text-xs">{res.momentum_rank}</span>
-                                  <span className={`ml-2 text-xs ${res.momentum_score < 0 ? 'text-red-400' : 'text-green-400'}`}>{res.momentum_score_str}</span>
-                                </td>
-                                <td className="p-3">
-                                  <span className={`px-2 py-1 rounded font-bold text-xs ${res.buy_signal === '觀望' ? 'text-slate-500' : 'bg-red-500/20 text-red-400 border border-red-500/50'}`}>{res.buy_signal}</span>
-                                </td>
-                                <td className="p-3">
-                                  <span className={`px-2 py-1 rounded font-bold text-xs ${res.sell_signal === '持有' ? 'text-slate-500' : 'bg-green-600/30 text-green-300 border border-green-500'}`}>{res.sell_signal}</span>
-                                </td>
-                                <td className="p-3 text-xs text-slate-300">
-                                  月K: <span className={res.monthly_k < 30 ? "text-red-400 font-bold" : ""}>{res.monthly_k}</span> | 
-                                  KD: {res.monthly_kd_cross === 'GOLDEN' ? '金叉' : res.monthly_kd_cross === 'DEATH' ? '死叉' : '-'} | 
-                                  乖離: <span className={res.bias_val < -15 ? "text-red-400 font-bold" : ""}>{res.bias_val}%</span>
-                                </td>
-                                <td className="p-3 text-xs text-slate-300">
-                                  MACD: {res.weekly_macd_cross === 'DEATH' ? <span className="text-green-400 font-bold">死叉</span> : '-'} | 
-                                  柱狀: <span className={res.weekly_hist_shrinking ? "text-cyan-400" : ""}>{res.weekly_macd_hist} {res.weekly_hist_shrinking ? '(縮)' : ''}</span> | 
-                                  20週: {res.weekly_ma20}
-                                </td>
-                                <td className="p-3 text-center sticky right-0 bg-slate-800">
-                                  <button onClick={() => generateStockReport(res)} className="p-2 hover:bg-purple-600 rounded-full transition-all">✨</button>
-                                </td>
-                              </tr>
-                            ))}
+                            {results.map((res) => {
+                              let rankBadge = "bg-blue-900/40 text-blue-300 border-blue-800";
+                              if (res.momentum_rank === "第 1 名") rankBadge = "bg-yellow-500/30 text-yellow-400 border-yellow-500 font-bold shadow-[0_0_10px_rgba(234,179,8,0.3)]";
+                              else if (res.momentum_rank === "第 2 名") rankBadge = "bg-slate-300/30 text-slate-200 border-slate-400 font-bold";
+                              else if (res.momentum_rank === "第 3 名") rankBadge = "bg-orange-700/40 text-orange-300 border-orange-700 font-bold";
+                              else if (res.momentum_rank === "不投資") rankBadge = "bg-slate-700 text-slate-400 border-slate-600 line-through";
+                              else if (res.momentum_rank === "資料不足") rankBadge = "bg-slate-800 text-slate-500 border-slate-700";
+
+                              return (
+                                <tr key={res.id} className="hover:bg-slate-750">
+                                  <td className="p-3 font-bold text-white whitespace-nowrap sticky left-0 bg-slate-800 z-10">{res.symbol}</td>
+                                  
+                                  <td className="p-3 whitespace-nowrap">
+                                    <span className={`px-3 py-1 rounded-full text-xs md:text-sm border ${rankBadge}`}>
+                                      {res.momentum_rank}
+                                    </span>
+                                  </td>
+
+                                  <td className={`p-3 whitespace-nowrap font-mono text-sm ${res.momentum_score < 0 ? 'text-red-400' : 'text-green-400'}`}>
+                                    {res.momentum_score_str}
+                                  </td>
+                                  
+                                  <td className="p-3 whitespace-nowrap">
+                                    <span className={`px-3 py-1 rounded-full text-sm font-bold border ${getBuyBadgeStyle(res.buy_signal)}`}>
+                                      {res.buy_signal}
+                                    </span>
+                                  </td>
+
+                                  <td className="p-3 whitespace-nowrap">
+                                    <span className={`px-3 py-1 rounded-full text-sm font-bold border ${
+                                      res.sell_signal === "全數賣出" ? "bg-green-500/30 text-green-300 border-green-500" :
+                                      res.sell_signal === "減碼50%" ? "bg-teal-500/20 text-teal-300 border-teal-500" :
+                                      "bg-slate-700 text-slate-400 border-slate-600 font-normal"
+                                    }`}>
+                                      {res.sell_signal}
+                                    </span>
+                                  </td>
+
+                                  <td className="p-3 whitespace-nowrap text-xs text-slate-400">
+                                    <div>月K: <span className={res.monthly_k < 30 ? "text-red-300 font-bold" : "text-white"}>{res.monthly_k}</span> | KD: {res.monthly_kd_cross === "GOLDEN" ? <span className="text-red-300">金叉</span> : res.monthly_kd_cross === "DEATH" ? <span className="text-green-300">死叉</span> : "-"}</div>
+                                    <div className="mt-1">週MACD: {res.weekly_macd_cross === "DEATH" ? <span className="text-green-300">死叉</span> : res.weekly_macd_cross === "GOLDEN" ? <span className="text-red-300">金叉</span> : "-"}</div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
                     </section>
                   )}
-                </div>
 
-                {showAiModal && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-                    <div className="bg-slate-800 border border-purple-500/50 rounded-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[80vh]">
-                      <div className="bg-slate-900 p-4 flex justify-between items-center border-b border-slate-700">
-                        <h3 className="text-lg font-bold text-white flex items-center gap-2">✨ Gemini AI 分析中心</h3>
-                        <button onClick={() => setShowAiModal(false)} className="text-slate-400 hover:text-white transition-all">✕</button>
-                      </div>
-                      <div className="p-6 overflow-y-auto text-slate-200 leading-relaxed text-sm whitespace-pre-wrap">{aiContent}</div>
-                    </div>
-                  </div>
-                )}
+                  <footer className="mt-8 mb-4 bg-slate-800 rounded-xl p-6 border border-slate-700 text-sm text-slate-400 leading-relaxed shadow-xl">
+                    <h4 className="text-blue-300 font-bold mb-3 text-base flex items-center gap-2">
+                      <span className="text-lg">⚠️</span> 雲端平台免費方案保活指南 (必讀)
+                    </h4>
+                    <ul className="list-disc pl-5 space-y-2">
+                      <li><strong>Render (後端伺服器)：</strong> 超過 15 分鐘無人使用會自動休眠。<span className="text-slate-200">無須定期登入後台</span>，只需在打開網頁時耐心等待 1~2 分鐘讓伺服器喚醒即可。</li>
+                      <li><strong>GitHub Actions (百大名單自動更新)：</strong> 官方規定若專案庫 <span className="text-red-300 font-bold">連續 60 天無任何活動</span>，會自動暫停排程。<span className="text-slate-200">強烈建議您每 1.5 個月 (約 45 天) 登入 GitHub 一次</span>，隨意修改一下 README.md 檔案的文字並儲存，以保持帳號活躍。</li>
+                    </ul>
+                  </footer>
+
+                </div>
               </div>
-              <style>{`.custom-scrollbar::-webkit-scrollbar { width: 6px; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #3b82f6; border-radius: 10px; }`}</style>
+              <style>
+                {`
+                  .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+                  .custom-scrollbar::-webkit-scrollbar-track { background: #1e293b; border-radius: 4px; }
+                  .custom-scrollbar::-webkit-scrollbar-thumb { background: #3b82f6; border-radius: 4px; }
+                  .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #60a5fa; }
+                `}
+              </style>
             </>
           );
         };
+
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
